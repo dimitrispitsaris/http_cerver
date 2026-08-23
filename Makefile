@@ -1,10 +1,11 @@
 CC = gcc
 
-CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -g
+CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -g -Iinclude
 
 TARGET = build/http_server
 
-SRC = src/main.c
+SRC = src/main.c src/server.c src/http.c src/file.c src/mime.c src/io.c
+
 
 all: $(TARGET)
 
