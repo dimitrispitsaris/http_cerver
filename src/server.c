@@ -50,7 +50,7 @@ int server_start(server_t *server)
     return 0;
 }
 
-int server_accept(server_t *server)
+int server_accept(server_t *server,int client_timeout)
 {
     struct sockaddr_in client_address;
     socklen_t client_address_len = sizeof(client_address);
@@ -65,25 +65,26 @@ int server_accept(server_t *server)
         perror("accept");
         return -1;
     }
-
     struct timeval timeout;
 
-    timeout.tv_sec = 10;
+    timeout.tv_sec = client_timeout;
     timeout.tv_usec = 0;
 
     if (setsockopt(
-            client_fd,
-            SOL_SOCKET,
-            SO_RCVTIMEO,
-            &timeout,
-            sizeof(timeout)
-        ) < 0) {
+	        client_fd,
+	        SOL_SOCKET,
+	        SO_RCVTIMEO,
+	        &timeout,
+	        sizeof(timeout)
+	    ) < 0) {
 
-        perror("setsockopt(SO_RCVTIMEO)");
+	    perror("setsockopt(SO_RCVTIMEO)");
 
-        close(client_fd);
-        return -1;
-    }
+	    close(client_fd);
+	    return -1;
+	}
+
+
 
     return client_fd;
 }

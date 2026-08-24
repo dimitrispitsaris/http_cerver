@@ -2,6 +2,7 @@
 #include "mime.h"
 #include "io.h"
 #include "http.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -9,7 +10,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define DOCUMENT_ROOT "public"
+#include "config.h"
 
 #define HTTP_BUFFER_SIZE 16384
 
@@ -27,6 +28,144 @@ static int http_method_allowed(const char *method)
     if (strcmp(method, "HEAD") == 0) {
         return 1;
     }
+
+    return 0;
+}
+
+
+/* ============================================================
+ * Convert one hexadecimal character to its integer value
+ *
+ * Example:
+ *
+ *     'A' -> 10
+ *     'f' -> 15
+ *     '7' -> 7
+ *
+ * Returns -1 for an invalid hexadecimal character.
+ * ============================================================ */
+
+static int http_hex_value(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+
+    if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+    }
+
+    if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+
+    return -1;
+}
+
+
+/* ============================================================
+ * Percent-decode an HTTP path
+ *
+ * Example:
+ *
+ *     /hello%20world.html
+ *
+ * becomes:
+ *
+ *     /hello world.html
+ *
+ * Invalid encodings are rejected.
+ *
+ * %00 is rejected because it would introduce a NUL byte
+ * into a C string.
+ * ============================================================ */
+
+static int http_decode_path(
+    const char *encoded,
+    char *decoded,
+    size_t decoded_size)
+{
+    size_t src = 0;
+    size_t dst = 0;
+
+    while (encoded[src] != '\0') {
+
+        if (dst + 1 >= decoded_size) {
+            return -1;
+        }
+
+        /*
+         * Percent-encoded byte.
+         *
+         * Example:
+         *
+         *     %20
+         *
+         *     %
+         *     ^^
+         *     hexadecimal digits
+         */
+        if (encoded[src] == '%') {
+
+            /*
+             * We need two characters after '%'.
+             */
+            if (encoded[src + 1] == '\0' ||
+                encoded[src + 2] == '\0') {
+
+                return -1;
+            }
+
+            int high =
+                http_hex_value(encoded[src + 1]);
+
+            int low =
+                http_hex_value(encoded[src + 2]);
+
+            if (high < 0 || low < 0) {
+                return -1;
+            }
+
+            unsigned char value =
+                (unsigned char)((high << 4) | low);
+
+            /*
+             * NUL cannot exist inside our C string.
+             */
+            if (value == '\0') {
+                return -1;
+            }
+
+            /*
+             * Reject ASCII control characters.
+             */
+            if (value < 32 || value == 127) {
+                return -1;
+            }
+
+            decoded[dst++] = (char)value;
+
+            src += 3;
+
+        } else {
+
+            unsigned char value =
+                (unsigned char)encoded[src];
+
+            /*
+             * Reject control characters.
+             */
+            if (value < 32 || value == 127) {
+                return -1;
+            }
+
+            decoded[dst++] =
+                encoded[src++];
+
+        }
+    }
+
+    decoded[dst] = '\0';
 
     return 0;
 }
@@ -104,7 +243,8 @@ static const char *http_get_header(
 
         if (strcasecmp(
                 request->headers[i].name,
-                name ) == 0) {
+                name
+            ) == 0) {
 
             return request->headers[i].value;
         }
@@ -154,10 +294,8 @@ static int http_parse_headers(
         /*
          * Find end of current header line.
          */
-        const char *line_end = strstr(
-            line,
-            "\r\n"
-        );
+        const char *line_end =
+            strstr(line, "\r\n");
 
         if (line_end == NULL) {
             return -1;
@@ -166,11 +304,12 @@ static int http_parse_headers(
         /*
          * Find ':' separating header name and value.
          */
-        const char *colon = memchr(
-            line,
-            ':',
-            (size_t)(line_end - line)
-        );
+        const char *colon =
+            memchr(
+                line,
+                ':',
+                (size_t)(line_end - line)
+            );
 
         if (colon == NULL) {
             return -1;
@@ -204,7 +343,8 @@ static int http_parse_headers(
         /*
          * Header value begins after ':'.
          */
-        const char *value_start = colon + 1;
+        const char *value_start =
+            colon + 1;
 
         /*
          * Ignore optional whitespace after ':'.
@@ -324,11 +464,12 @@ int http_send_response(
         return -1;
     }
 
-    ssize_t sent = io_send_all(
-        client_fd,
-        response,
-        (size_t)length
-    );
+    ssize_t sent =
+        io_send_all(
+            client_fd,
+            response,
+            (size_t)length
+        );
 
     if (sent < 0) {
         return -1;
@@ -441,11 +582,12 @@ int http_send_error(
     }
 
 
-    ssize_t sent = io_send_all(
-        client_fd,
-        body,
-        body_length
-    );
+    ssize_t sent =
+        io_send_all(
+            client_fd,
+            body,
+            body_length
+        );
 
     if (sent < 0) {
         return -1;
@@ -474,17 +616,24 @@ int http_parse_request(
     http_request_t *request)
 {
     request->header_count = 0;
+    request->query[0] = '\0';
 
     /*
      * Parse:
      *
-     * METHOD PATH VERSION
+     * METHOD TARGET VERSION
+     *
+     * Example:
+     *
+     * GET /index.html?name=dimitris HTTP/1.1
      */
+    char target[4096];
+
     int fields = sscanf(
         buffer,
         "%15s %4095s %15s",
         request->method,
-        request->path,
+        target,
         request->version
     );
 
@@ -496,8 +645,82 @@ int http_parse_request(
     /*
      * Currently support HTTP/1.0 and HTTP/1.1.
      */
-    if (strcmp(request->version, "HTTP/1.1") != 0 &&
-        strcmp(request->version, "HTTP/1.0") != 0) {
+    if (strcmp(
+            request->version,
+            "HTTP/1.1"
+        ) != 0 &&
+        strcmp(
+            request->version,
+            "HTTP/1.0"
+        ) != 0) {
+
+        return -1;
+    }
+
+
+    /*
+     * Separate query string from path.
+     *
+     * Example:
+     *
+     * /index.html?name=dimitris
+     *
+     * becomes:
+     *
+     * target       = "/index.html"
+     * request->query = "name=dimitris"
+     */
+    char *query_start =
+        strchr(target, '?');
+
+    if (query_start != NULL) {
+
+        *query_start = '\0';
+
+        query_start++;
+
+        if (strlen(query_start) >=
+            sizeof(request->query)) {
+
+            return -1;
+        }
+
+        strcpy(
+            request->query,
+            query_start
+        );
+    }
+
+
+    /*
+     * The request target must begin with '/'.
+     */
+    if (target[0] != '/') {
+        return -1;
+    }
+
+
+    /*
+     * Decode the URL path.
+     *
+     * IMPORTANT:
+     *
+     * Decoding happens BEFORE filesystem
+     * security validation.
+     *
+     * Example:
+     *
+     * /%2e%2e/etc/passwd
+     *
+     * becomes:
+     *
+     * /../etc/passwd
+     */
+    if (http_decode_path(
+            target,
+            request->path,
+            sizeof(request->path)
+        ) < 0) {
 
         return -1;
     }
@@ -526,7 +749,8 @@ static int http_process_request(
     int client_fd,
     const char *buffer,
     size_t length,
-    int *close_connection)
+    int *close_connection,
+    const server_config_t *config)
 {
     /*
      * Make a temporary null-terminated copy because
@@ -666,9 +890,6 @@ static int http_process_request(
     }
 
 
-    /*
-     * Determine response connection behavior.
-     */
     int keep_alive =
         !(*close_connection);
 
@@ -677,9 +898,11 @@ static int http_process_request(
         "Parsed HTTP request:\n"
         "  Method:  %s\n"
         "  Path:    %s\n"
+        "  Query:   %s\n"
         "  Version: %s\n",
         request.method,
         request.path,
+        request.query,
         request.version
     );
 
@@ -700,11 +923,14 @@ static int http_process_request(
 
     /*
      * Open requested file.
+     *
+     * file_open_path() now performs secure
+     * filesystem resolution using openat2().
      */
     file_t file;
 
     if (file_open_path(
-            DOCUMENT_ROOT,
+            config->document_root,
             request.path,
             &file
         ) < 0) {
@@ -746,7 +972,7 @@ static int http_process_request(
 
 
     /*
-     * Determine MIME type.
+     * Determine MIME type using the decoded path.
      */
     const char *content_type =
         mime_type(request.path);
@@ -769,7 +995,7 @@ static int http_process_request(
 
 
     /*
-     * HEAD sends the headers but NOT the body.
+     * HEAD sends headers but NOT the body.
      */
     if (strcmp(
             request.method,
@@ -787,9 +1013,6 @@ static int http_process_request(
     }
 
 
-    /*
-     * We are finished with the file.
-     */
     close(file.fd);
 
     return 0;
@@ -802,7 +1025,9 @@ static int http_process_request(
  * One TCP connection may contain multiple HTTP requests.
  * ============================================================ */
 
-int http_handle_request(int client_fd)
+int http_handle_request(
+    int client_fd,
+    const server_config_t *config)
 {
     char buffer[HTTP_BUFFER_SIZE];
 
@@ -851,21 +1076,19 @@ int http_handle_request(int client_fd)
                 }
 
                 if (errno == EAGAIN ||
-	        errno == EWOULDBLOCK) {
+                    errno == EWOULDBLOCK) {
 
-	        fprintf(
-	            stderr,
-	            "Client receive timeout\n");
+                    fprintf(
+                        stderr,
+                        "Client receive timeout\n"
+                    );
 
-	        return -1;
-	    }
+                    return -1;
+                }
 
-	    perror("recv");
-	    return -1;
-
-	    }
-
-            
+                perror("recv");
+                return -1;
+            }
 
 
             /*
@@ -876,7 +1099,8 @@ int http_handle_request(int client_fd)
             }
 
 
-            buffer_used += (size_t)received;
+            buffer_used +=
+                (size_t)received;
         }
 
 
@@ -895,8 +1119,6 @@ int http_handle_request(int client_fd)
 
 
         /*
-         * Number of bytes belonging to this request.
-         *
          * GET and HEAD currently have no request body.
          */
         size_t request_length =
@@ -910,7 +1132,8 @@ int http_handle_request(int client_fd)
                 client_fd,
                 buffer,
                 request_length,
-                &close_connection
+                &close_connection,
+                config
             ) < 0) {
 
             return -1;
@@ -919,6 +1142,14 @@ int http_handle_request(int client_fd)
 
         /*
          * Remove processed request from buffer.
+         *
+         * This is what allows pipelined requests:
+         *
+         * [request 1][request 2]
+         *
+         * after request 1:
+         *
+         * [request 2]
          */
         size_t remaining =
             buffer_used - request_length;
@@ -940,4 +1171,3 @@ int http_handle_request(int client_fd)
 
     return 0;
 }
-
