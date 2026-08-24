@@ -16,7 +16,6 @@ This project is designed to explore systems programming concepts including:
 - Concurrent network programming
 - Event-driven I/O
 - Linux `epoll`
-- Zero-copy file transfer with `sendfile()`
 - Memory management
 - Error handling
 - Testing and benchmarking
