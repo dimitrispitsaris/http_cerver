@@ -35,15 +35,12 @@ typedef struct {
 } http_request_t;
 
 
-const char *http_status_reason(
-    http_status_t status
-);
+const char *http_status_reason(http_status_t status);
 
 
 int http_parse_request(
     const char *buffer,
-    http_request_t *request
-);
+    http_request_t *request);
 
 
 int http_send_response(
@@ -51,19 +48,15 @@ int http_send_response(
     http_status_t status,
     const char *content_type,
     off_t content_length,
-    int keep_alive
-);
+    int keep_alive);
 
 
 int http_send_error(
     int client_fd,
     http_status_t status,
-    int keep_alive
-);
+    int keep_alive);
 
 
-int http_handle_request(
-    int client_fd
-);
+int http_handle_request(int client_fd);
 
 #endif

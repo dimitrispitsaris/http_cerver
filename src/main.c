@@ -39,16 +39,14 @@ int main(void)
             fprintf(
                 stderr,
                 "Error handling client fd=%d\n",
-                client_fd
-            );
+                client_fd);
         }
 
         close(client_fd);
 
         printf(
             "Client disconnected: fd=%d\n",
-            client_fd
-        );
+            client_fd);
     }
 
     close(server.fd);

@@ -104,8 +104,7 @@ static const char *http_get_header(
 
         if (strcasecmp(
                 request->headers[i].name,
-                name
-            ) == 0) {
+                name ) == 0) {
 
             return request->headers[i].value;
         }
@@ -851,9 +850,22 @@ int http_handle_request(int client_fd)
                     continue;
                 }
 
-                perror("recv");
-                return -1;
-            }
+                if (errno == EAGAIN ||
+	        errno == EWOULDBLOCK) {
+
+	        fprintf(
+	            stderr,
+	            "Client receive timeout\n");
+
+	        return -1;
+	    }
+
+	    perror("recv");
+	    return -1;
+
+	    }
+
+            
 
 
             /*

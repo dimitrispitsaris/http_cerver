@@ -4,7 +4,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-
+#include <unistd.h>
+#include <sys/time.h>
 
 int server_init(server_t *server,int port,int backlog)
 {
@@ -51,21 +52,40 @@ int server_start(server_t *server)
 
 int server_accept(server_t *server)
 {
-	struct sockaddr_in client_address;
-	socklen_t client_address_len=sizeof(client_address);
+    struct sockaddr_in client_address;
+    socklen_t client_address_len = sizeof(client_address);
 
-	int client_fd=accept(
-	server->fd,
-	(struct sockaddr *)&client_address,
-	&client_address_len);
+    int client_fd = accept(
+        server->fd,
+        (struct sockaddr *)&client_address,
+        &client_address_len
+    );
 
-	if (client_fd<0)
-	{
-		perror("accept");
-		return -1;
-	}
+    if (client_fd < 0) {
+        perror("accept");
+        return -1;
+    }
 
-	return client_fd;
+    struct timeval timeout;
+
+    timeout.tv_sec = 10;
+    timeout.tv_usec = 0;
+
+    if (setsockopt(
+            client_fd,
+            SOL_SOCKET,
+            SO_RCVTIMEO,
+            &timeout,
+            sizeof(timeout)
+        ) < 0) {
+
+        perror("setsockopt(SO_RCVTIMEO)");
+
+        close(client_fd);
+        return -1;
+    }
+
+    return client_fd;
 }
 
 
