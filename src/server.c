@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "server.h"
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -6,18 +7,34 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <fcntl.h>
 
-int server_init(server_t *server,int port,int backlog)
+
+int server_init(server_t *server,const server_config_t *config)
 {
-	server->port=port;
-	server->backlog=backlog;
+	server->port=config->port;
+	server->backlog=config->backlog;
+	// Initialize FDs to invalid values. * * This is important for server_destroy().
+	 server->fd = -1;
+	 server->root_fd = -1;
 
 	server->fd=socket(AF_INET,SOCK_STREAM,0);
 
 	  if (server->fd < 0) {
-        perror("socket");
-        return -1;
+       		  perror("socket");
+          return -1;
     }
+
+	  server->root_fd=open(config->document_root,O_RDONLY | O_DIRECTORY);
+
+	  if (server->root_fd<0)
+	  {
+		  perror("open document root");
+		  close(server->fd);
+		  server->fd=-1;
+		  return -1;
+	  }
+
 
     return 0;
 }
@@ -28,8 +45,8 @@ int server_start(server_t *server)
 	struct sockaddr_in address;
 	memset(&address,0,sizeof(address));
 
-	address.sin_family=AF_INET;
-	address.sin_port=htons(server->port);
+	address.sin_family=AF_INET; //IPv4
+	address.sin_port=htons(server->port); //Convert host byte order to network byte order
 
 	if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) != 1) {
         fprintf(stderr, "Invalid server address\n");
@@ -65,6 +82,8 @@ int server_accept(server_t *server,int client_timeout)
         perror("accept");
         return -1;
     }
+
+    //Config receive timeout. Prevents persistent HTTP conn from waiting forever for next req.
     struct timeval timeout;
 
     timeout.tv_sec = client_timeout;
@@ -83,10 +102,22 @@ int server_accept(server_t *server,int client_timeout)
 	    close(client_fd);
 	    return -1;
 	}
-
-
-
     return client_fd;
 }
 
+void server_destroy(server_t *server)
+    {
+	    if (server->fd>=0)
+	    {
+		    close(server->fd);
+		    server->fd=-1;
+	    }
+
+	    if (server->root_fd>=0)
+	    {
+		    close(server->root_fd);
+		    server->root_fd=-1;
+	    }
+
+	}	
 

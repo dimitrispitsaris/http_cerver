@@ -40,7 +40,7 @@ int main(void)
     config_init(&config);
 
 
-    if (server_init(&server,config.port,config.backlog) < 0) {
+    if (server_init(&server,&config) < 0) {
         return EXIT_FAILURE;
     }
 
