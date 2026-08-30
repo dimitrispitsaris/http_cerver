@@ -169,6 +169,126 @@ static int http_decode_path(
 
     return 0;
 }
+/* ============================================================
+ * Parse HTTP request target
+ *
+ * Separates:
+ *
+ *     /index.html?name=dimitris
+ *
+ * into:
+ *
+ *     path  = /index.html
+ *     query = name=dimitris
+ *
+ * Then percent-decodes the path.
+ * ============================================================ */
+
+static int http_parse_target(
+    const char *target,
+    http_request_t *request)
+{
+    char path[4096];
+
+    /*
+     * Find the beginning of the query string.
+     */
+    const char *query_start =
+        strchr(target, '?');
+
+
+    if (query_start != NULL) {
+
+        /*
+         * Copy only the path portion.
+         */
+        size_t path_length =
+            (size_t)(query_start - target);
+
+        if (path_length == 0 ||
+            path_length >= sizeof(path)) {
+
+            return -1;
+        }
+
+        memcpy(
+            path,
+            target,
+            path_length
+        );
+
+        path[path_length] = '\0';
+
+
+        /*
+         * Skip '?'.
+         */
+        query_start++;
+
+
+        /*
+         * Copy query string.
+         */
+        size_t query_length =
+            strlen(query_start);
+
+        if (query_length >=
+            sizeof(request->query)) {
+
+            return -1;
+        }
+
+        memcpy(
+            request->query,
+            query_start,
+            query_length + 1
+        );
+
+    } else {
+
+        /*
+         * No query string.
+         */
+        if (strlen(target) >=
+            sizeof(path)) {
+
+            return -1;
+        }
+
+        strcpy(
+            path,
+            target
+        );
+
+        request->query[0] = '\0';
+    }
+
+
+    /*
+     * HTTP origin-form request targets must
+     * begin with '/'.
+     */
+    if (path[0] != '/') {
+        return -1;
+    }
+
+
+    /*
+     * Decode the path BEFORE passing it
+     * to the filesystem layer.
+     */
+    if (http_decode_path(
+            path,
+            request->path,
+            sizeof(request->path)
+        ) < 0) {
+
+        return -1;
+    }
+
+
+    return 0;
+}
 
 
 /* ============================================================
@@ -670,59 +790,10 @@ int http_parse_request(
      * target       = "/index.html"
      * request->query = "name=dimitris"
      */
-    char *query_start =
-        strchr(target, '?');
-
-    if (query_start != NULL) {
-
-        *query_start = '\0';
-
-        query_start++;
-
-        if (strlen(query_start) >=
-            sizeof(request->query)) {
-
-            return -1;
-        }
-
-        strcpy(
-            request->query,
-            query_start
-        );
-    }
-
-
-    /*
-     * The request target must begin with '/'.
-     */
-    if (target[0] != '/') {
-        return -1;
-    }
-
-
-    /*
-     * Decode the URL path.
-     *
-     * IMPORTANT:
-     *
-     * Decoding happens BEFORE filesystem
-     * security validation.
-     *
-     * Example:
-     *
-     * /%2e%2e/etc/passwd
-     *
-     * becomes:
-     *
-     * /../etc/passwd
-     */
-    if (http_decode_path(
-            target,
-            request->path,
-            sizeof(request->path)
-        ) < 0) {
-
-        return -1;
+    
+    if (http_parse_target(target,request)<0)
+    {
+	    return -1;
     }
 
 
