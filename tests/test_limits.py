@@ -6,7 +6,6 @@ import socket
 import subprocess
 import time
 
-
 HOST = "127.0.0.1"
 SERVER = "./build/http_server"
 
@@ -26,7 +25,7 @@ def start_server(port, *args):
         start_new_session=True,
     )
 
-    # Wait until the server is accepting connections.
+    # Wait until the server accepts connections.
     for _ in range(50):
         try:
             with socket.create_connection(
@@ -51,8 +50,8 @@ def stop_server(process):
     if process.poll() is not None:
         return
 
-    # Because start_new_session=True was used,
-    # process.pid is also the process-group ID.
+    # start_new_session=True makes the server the leader
+    # of its own process group.
     os.killpg(
         process.pid,
         signal.SIGTERM
@@ -88,8 +87,8 @@ def send_request(port, request):
 
             except ConnectionResetError:
                 # The server may reset the connection after
-                # sending the HTTP response when unread request
-                # bytes remain in the receive queue.
+                # sending the HTTP error response when unread
+                # request bytes remain in the receive buffer.
                 break
 
             if not chunk:
@@ -98,7 +97,6 @@ def send_request(port, request):
             response.extend(chunk)
 
     return bytes(response)
-
 
 
 def get_status(response):
@@ -134,6 +132,15 @@ def get_status(response):
         ) from exc
 
 
+def assert_431(response):
+    assert get_status(response) == 431
+
+    assert (
+        b"431 Request Header Fields Too Large"
+        in response
+    )
+
+
 def test_max_headers():
     """
     Configure a maximum of 2 headers.
@@ -142,7 +149,7 @@ def test_max_headers():
     Connection
     X-Third
 
-    The third header must be rejected.
+    The third header must be rejected with 431.
     """
     port = 18080
 
@@ -166,7 +173,7 @@ def test_max_headers():
             request
         )
 
-        assert get_status(response) == 400
+        assert_431(response)
 
     finally:
         stop_server(server)
@@ -176,8 +183,8 @@ def test_header_name_limit():
     """
     Configure a maximum header-name length of 10.
 
-    The current C implementation uses >= for the
-    limit check, so a 10-byte header name is rejected.
+    The current implementation uses >=, so a
+    10-byte header name is rejected with 431.
     """
     port = 18081
 
@@ -201,7 +208,7 @@ def test_header_name_limit():
             request
         )
 
-        assert get_status(response) == 400
+        assert_431(response)
 
     finally:
         stop_server(server)
@@ -211,8 +218,8 @@ def test_header_value_limit():
     """
     Configure a maximum header-value length of 10.
 
-    The current C implementation uses >= for the
-    limit check, so a 10-byte value is rejected.
+    The current implementation uses >=, so a
+    10-byte value is rejected with 431.
     """
     port = 18082
 
@@ -236,7 +243,7 @@ def test_header_value_limit():
             request
         )
 
-        assert get_status(response) == 400
+        assert_431(response)
 
     finally:
         stop_server(server)
@@ -247,7 +254,7 @@ def test_http_buffer_limit():
     Configure a very small HTTP receive buffer.
 
     The complete request is intentionally larger than
-    64 bytes, so the server must reject it.
+    64 bytes, so the server must reject it with 431.
     """
     port = 18083
 
@@ -275,7 +282,7 @@ def test_http_buffer_limit():
             request
         )
 
-        assert get_status(response) == 400
+        assert_431(response)
 
     finally:
         stop_server(server)
@@ -312,7 +319,6 @@ def main():
         print(
             f"{failures} test(s) failed"
         )
-
         return 1
 
     print(
@@ -324,6 +330,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-

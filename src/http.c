@@ -415,7 +415,7 @@ static int http_parse_headers(
     const char *line = strstr(buffer, "\r\n");
 
     if (line == NULL) {
-        return -1;
+        return HTTP_PARSE_BAD_REQUEST;
     }
 
     /*
@@ -438,7 +438,7 @@ static int http_parse_headers(
          * Prevent too many headers.
          */
         if (request->header_count >= config->http_max_headers) {
-            return -1;
+            return HTTP_PARSE_HEADERS_TOO_LARGE;
         }
 
         /*
@@ -448,7 +448,7 @@ static int http_parse_headers(
             strstr(line, "\r\n");
 
         if (line_end == NULL) {
-            return -1;
+            return HTTP_PARSE_BAD_REQUEST;
         }
 
         /*
@@ -462,7 +462,7 @@ static int http_parse_headers(
             );
 
         if (colon == NULL) {
-            return -1;
+            return -HTTP_PARSE_BAD_REQUEST;
         }
 
         /*
@@ -471,10 +471,13 @@ static int http_parse_headers(
         size_t name_length =
             (size_t)(colon - line);
 
-        if (name_length == 0 ||
-            name_length >= config->http_header_name_max) {
+        if (name_length == 0){
+		return HTTP_PARSE_BAD_REQUEST;
+	}
 
-            return -1;
+        if (name_length >= config->http_header_name_max) {
+
+            return HTTP_PARSE_HEADERS_TOO_LARGE;
         }
 
         memcpy(
@@ -503,11 +506,10 @@ static int http_parse_headers(
             value_start++;
         }
 
-        size_t value_length =
-            (size_t)(line_end - value_start);
+        size_t value_length = (size_t)(line_end - value_start);
 
         if (value_length >= config->http_header_value_max) {
-            return -1;
+            return HTTP_PARSE_HEADERS_TOO_LARGE;
         }
 
         memcpy(
@@ -554,6 +556,9 @@ const char *http_status_reason(http_status_t status)
 
         case HTTP_STATUS_INTERNAL_SERVER_ERROR:
             return "Internal Server Error";
+
+	case HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE:
+	    return "Request Header Fields Too Large";
 
         default:
             return "Unknown";
@@ -692,6 +697,17 @@ int http_send_error(
 
             break;
 
+	case HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE:
+
+    	     body =
+        	"<html>"
+	        "<body>"
+        	"<h1>431 Request Header Fields Too Large</h1>"
+	        "</body>"
+        	"</html>";
+
+	       break;
+
 
         case HTTP_STATUS_INTERNAL_SERVER_ERROR:
 
@@ -789,14 +805,8 @@ int http_parse_request(
     /*
      * Currently support HTTP/1.0 and HTTP/1.1.
      */
-    if (strcmp(
-            request->version,
-            "HTTP/1.1"
-        ) != 0 &&
-        strcmp(
-            request->version,
-            "HTTP/1.0"
-        ) != 0) {
+    if (strcmp ( request->version, "HTTP/1.1") != 0 &&
+        strcmp(request->version, "HTTP/1.0" ) != 0) {
 
         return -1;
     }
@@ -824,15 +834,15 @@ int http_parse_request(
     /*
      * Parse headers.
      */
-    if (http_parse_headers(
-            buffer,
-            request,
-	    config
-        ) < 0) {
+	int result =
+ 	   http_parse_headers(
+           buffer,
+           request,
+           config );
 
-        return -1;
-    }
-
+	if (result != HTTP_PARSE_OK) {
+	    return result;
+	}	
     return 0;
 }
 
@@ -879,27 +889,38 @@ static int http_process_request(
      */
     http_request_t request;
 
-    if (http_parse_request(
-            request_buffer,
-            &request,
-            config
-        ) < 0) {
+	int parse_result =
+    http_parse_request(
+        request_buffer,
+        &request,
+        config
+    );
+
+    if (parse_result != HTTP_PARSE_OK) {
+
+    	free(request_buffer);
+
+	*close_connection = 1;
+
+    if (parse_result ==
+        HTTP_PARSE_HEADERS_TOO_LARGE) {
 
         fprintf(
             stderr,
-            "Invalid HTTP request\n"
+            "HTTP request headers too large\n"
         );
-
-        free(request_buffer);
-
-        *close_connection = 1;
 
         return http_send_error(
             client_fd,
-            HTTP_STATUS_BAD_REQUEST,
+            HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE,
             0
         );
     }
+
+    	fprintf(stderr, "Invalid HTTP request\n");
+
+	return http_send_error(client_fd, HTTP_STATUS_BAD_REQUEST, 0 );
+}
 
     /*
      * request_buffer is no longer needed after parsing.
@@ -1134,9 +1155,7 @@ int http_handle_request(
 
                 http_send_error(
                     client_fd,
-                    HTTP_STATUS_BAD_REQUEST,
-                    0
-                );
+                    HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE,0 );
 
                 result= -1;
 		goto cleanup;
