@@ -21,7 +21,10 @@ run: $(TARGET)
 
 test: $(TARGET)
 	./$(TARGET) &
-	serevr_pid=$$!; \
+	server_pid=$$!; \
  	trap 'kill $$server_pid 2>/dev/null || true' EXIT INT TERM; \
 	sleep 0.2;\
-	python3 tests/test_http.py
+	python3 tests/test_http.py \
+	test_status=$$?; \
+	python3 tests/test_limits.py || test_status=$$?; \
+	exit $$test_status

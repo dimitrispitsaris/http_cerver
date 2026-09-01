@@ -29,4 +29,5 @@ typedef struct {
 
 void config_init(server_config_t *config);
 
+int config_parse_args(server_config_t *config,int argc, char **argv);
 #endif

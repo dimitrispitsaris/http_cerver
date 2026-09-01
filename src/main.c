@@ -19,7 +19,7 @@ static void reap_children(int signal)
 }
 
 
-int main(void)
+int main(int arc, char **argv)
 {
     struct sigaction sa;
 
@@ -38,6 +38,10 @@ int main(void)
     server_config_t config;
 
     config_init(&config);
+
+    if (config_parse_args(&config,arc,argv)<0){
+	    return EXIT_FAILURE;
+    }
 
 
     if (server_init(&server,&config) < 0) {
