@@ -12,6 +12,9 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+#define DEFAULT_INDEX_FILE "index.html"
+
 /* ============================================================
  * Open a regular file using an existing filesystem path
  * ============================================================ */
@@ -133,10 +136,8 @@ int file_open_path(
 
     /*
      * Empty path means the document root itself.
-     *
-     * This will subsequently fail the regular-file check,
-     * which currently gives 403.
      */
+
     if (*relative_path == '\0') {
         relative_path = ".";
     }
@@ -162,12 +163,6 @@ int file_open_path(
         );
 
 
-    int saved_errno = errno;
-
-    close(root_fd);
-
-    errno = saved_errno;
-
 
     if (fd < 0) {
 
@@ -180,17 +175,22 @@ int file_open_path(
          *
          * Treat both as forbidden.
          */
-        if (errno == EXDEV ||
-            errno == ELOOP) {
+       
+
+	int saved_errno=errno;
+	close(root_fd);
+
+        if (saved_errno == EXDEV ||
+            saved_errno == ELOOP) {
 
             errno = EACCES;
         }
+	else{
+		errno=saved_errno;
+	}
 
         return -1;
     }
-
-
-    file->fd = fd;
 
 
     /*
@@ -199,32 +199,122 @@ int file_open_path(
     struct stat st;
 
     if (fstat(
-            file->fd,
+            fd,
             &st
         ) < 0) {
+	int saved_errno=errno;
+	close(fd);
+        close(root_fd);
 
-        close(file->fd);
-
-        return -1;
-    }
-
-
-    if (!S_ISREG(st.st_mode)) {
-
-        close(file->fd);
-
-        errno = EACCES;
+	errno=saved_errno;
 
         return -1;
     }
 
 
-    file->size =
-        st.st_size;
+    if (S_ISREG(st.st_mode)) {
 
-    return 0;
+        file->fd=fd;
+
+	file->size=st.st_size;
+
+        close(root_fd);
+
+
+        return 0;
+    }
+
+
+ /*
+     * Directory:
+     *
+     * Attempt to open index.html inside it.
+     */
+
+
+    if (S_ISDIR(st.st_mode)) {
+
+        /*
+         * The opened directory FD becomes the base
+         * directory for index.html.
+         */
+        int index_fd =
+            syscall(
+                SYS_openat2,
+                fd,
+                DEFAULT_INDEX_FILE,
+                &how,
+                sizeof(how)
+            );
+
+
+        int saved_errno = errno;
+
+        close(fd);
+        close(root_fd);
+
+        errno = saved_errno;
+
+
+        if (index_fd < 0) {
+
+            if (errno == EXDEV ||
+                errno == ELOOP) {
+
+                errno = EACCES;
+            }
+
+            return -1;
+        }
+
+
+        /*
+         * Verify that index.html is a regular file.
+         */
+        if (fstat(
+                index_fd,
+                &st
+            ) < 0) {
+
+            int index_errno = errno;
+
+            close(index_fd);
+
+            errno = index_errno;
+
+            return -1;
+        }
+
+
+        if (!S_ISREG(st.st_mode)) {
+
+            close(index_fd);
+
+            errno = EACCES;
+
+            return -1;
+        }
+
+
+        file->fd =index_fd;
+
+        file->size = st.st_size;
+
+        return 0;
+    }
+
+
+    /*
+     * We don't serve other filesystem object types.
+     */
+
+    close(fd);
+    close(root_fd);
+
+    errno = EACCES;
+
+    return -1;
 }
-
 
 /* ============================================================
  * Send file through socket
