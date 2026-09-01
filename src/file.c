@@ -186,7 +186,6 @@ int file_open_path(
         ) < 0) {
 	int saved_errno=errno;
 	close(fd);
-        close(root_fd);
 
 	errno=saved_errno;
 
@@ -199,9 +198,6 @@ int file_open_path(
         file->fd=fd;
 
 	file->size=st.st_size;
-
-        close(root_fd);
-
 
         return 0;
     }
@@ -241,6 +237,7 @@ int file_open_path(
             return -1;
         }
 
+	close(fd);
 
         /*
          * Verify that index.html is a regular file.
@@ -283,7 +280,6 @@ int file_open_path(
      */
 
     close(fd);
-    close(root_fd);
 
     errno = EACCES;
 

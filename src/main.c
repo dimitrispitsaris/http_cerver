@@ -45,7 +45,7 @@ int main(void)
     }
 
     if (server_start(&server) < 0) {
-        close(server.fd);
+	server_destroy(&server);
         return EXIT_FAILURE;
     }
 
