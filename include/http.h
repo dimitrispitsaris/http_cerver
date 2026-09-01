@@ -92,6 +92,7 @@ int http_send_error(
 
 int http_handle_request(
     int client_fd,
+    int root_fd,
     const server_config_t *config
 );
 

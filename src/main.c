@@ -73,7 +73,7 @@ int main(void)
 
             close(server.fd);
 
-            if (http_handle_request(client_fd,&config) < 0) {
+            if (http_handle_request(client_fd,server.root_fd,&config) < 0) {
                 close(client_fd);
                 _exit(EXIT_FAILURE);
             }

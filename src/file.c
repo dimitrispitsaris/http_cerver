@@ -84,7 +84,7 @@ int file_open(
  * ============================================================ */
 
 int file_open_path(
-    const char *document_root,
+    int root_fd,
     const char *request_path,
     file_t *file)
 {
@@ -98,21 +98,6 @@ int file_open_path(
         return -1;
     }
 
-
-    /*
-     * Open the document root itself.
-     */
-    int root_fd =
-        open(
-            document_root,
-            O_RDONLY |
-            O_DIRECTORY |
-            O_CLOEXEC
-        );
-
-    if (root_fd < 0) {
-        return -1;
-    }
 
 
     /*
@@ -175,10 +160,7 @@ int file_open_path(
          *
          * Treat both as forbidden.
          */
-       
-
-	int saved_errno=errno;
-	close(root_fd);
+       int saved_errno=errno; 
 
         if (saved_errno == EXDEV ||
             saved_errno == ELOOP) {
@@ -246,14 +228,6 @@ int file_open_path(
                 &how,
                 sizeof(how)
             );
-
-
-        int saved_errno = errno;
-
-        close(fd);
-        close(root_fd);
-
-        errno = saved_errno;
 
 
         if (index_fd < 0) {

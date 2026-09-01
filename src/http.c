@@ -821,7 +821,7 @@ static int http_process_request(
     const char *buffer,
     size_t length,
     int *close_connection,
-    const server_config_t *config)
+    int root_fd)
 {
     /*
      * Make a temporary null-terminated copy because
@@ -1001,7 +1001,7 @@ static int http_process_request(
     file_t file;
 
     if (file_open_path(
-            config->document_root,
+            root_fd,
             request.path,
             &file
         ) < 0) {
@@ -1098,6 +1098,7 @@ static int http_process_request(
 
 int http_handle_request(
     int client_fd,
+    int root_fd,
     const server_config_t *config)
 {
     char buffer[HTTP_BUFFER_SIZE];
@@ -1204,8 +1205,7 @@ int http_handle_request(
                 buffer,
                 request_length,
                 &close_connection,
-                config
-            ) < 0) {
+		root_fd) < 0) {
 
             return -1;
         }
