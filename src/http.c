@@ -2,7 +2,7 @@
 #include "mime.h"
 #include "io.h"
 #include "http.h"
-
+#include <stdlib.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +12,36 @@
 
 #include "config.h"
 
-#define HTTP_BUFFER_SIZE 16384
+
+
+static int http_config_valid(
+    const server_config_t *config)
+{
+    if (config == NULL) {
+        return 0;
+    }
+
+    if (config->http_buffer_size == 0) {
+        return 0;
+    }
+
+    if (config->http_max_headers == 0 ||
+        config->http_max_headers > HTTP_MAX_HEADERS) {
+        return 0;
+    }
+
+    if (config->http_header_name_max == 0 ||
+        config->http_header_name_max > HTTP_HEADER_NAME_MAX) {
+        return 0;
+    }
+
+    if (config->http_header_value_max == 0 ||
+        config->http_header_value_max > HTTP_HEADER_VALUE_MAX) {
+        return 0;
+    }
+
+    return 1;
+}
 
 
 /* ============================================================
@@ -380,7 +409,8 @@ static const char *http_get_header(
 
 static int http_parse_headers(
     const char *buffer,
-    http_request_t *request)
+    http_request_t *request,
+    const server_config_t *config)
 {
     const char *line = strstr(buffer, "\r\n");
 
@@ -407,7 +437,7 @@ static int http_parse_headers(
         /*
          * Prevent too many headers.
          */
-        if (request->header_count >= HTTP_MAX_HEADERS) {
+        if (request->header_count >= config->http_max_headers) {
             return -1;
         }
 
@@ -442,22 +472,19 @@ static int http_parse_headers(
             (size_t)(colon - line);
 
         if (name_length == 0 ||
-            name_length >= HTTP_HEADER_NAME_MAX) {
+            name_length >= config->http_header_name_max) {
 
             return -1;
         }
 
         memcpy(
             request->headers[
-                request->header_count
-            ].name,
+            request->header_count].name,
             line,
             name_length
         );
 
-        request->headers[
-            request->header_count
-        ].name[name_length] = '\0';
+        request->headers[request->header_count].name[name_length] = '\0';
 
 
         /*
@@ -479,21 +506,17 @@ static int http_parse_headers(
         size_t value_length =
             (size_t)(line_end - value_start);
 
-        if (value_length >= HTTP_HEADER_VALUE_MAX) {
+        if (value_length >= config->http_header_value_max) {
             return -1;
         }
 
         memcpy(
-            request->headers[
-                request->header_count
-            ].value,
+            request->headers[request->header_count].value,
             value_start,
             value_length
         );
 
-        request->headers[
-            request->header_count
-        ].value[value_length] = '\0';
+        request->headers[request->header_count].value[value_length] = '\0';
 
 
         request->header_count++;
@@ -733,7 +756,8 @@ int http_send_error(
 
 int http_parse_request(
     const char *buffer,
-    http_request_t *request)
+    http_request_t *request,
+    const server_config_t *config)
 {
     request->header_count = 0;
     request->query[0] = '\0';
@@ -802,7 +826,8 @@ int http_parse_request(
      */
     if (http_parse_headers(
             buffer,
-            request
+            request,
+	    config
         ) < 0) {
 
         return -1;
@@ -821,23 +846,19 @@ static int http_process_request(
     const char *buffer,
     size_t length,
     int *close_connection,
-    int root_fd)
+    int root_fd,
+    const server_config_t *config)
 {
     /*
      * Make a temporary null-terminated copy because
      * the current parser uses sscanf()/strstr().
      */
-    char request_buffer[HTTP_BUFFER_SIZE];
+    char *request_buffer = malloc(length + 1);
 
-    if (length >= sizeof(request_buffer)) {
-
+    if (request_buffer == NULL) {
+        perror("malloc");
         *close_connection = 1;
-
-        return http_send_error(
-            client_fd,
-            HTTP_STATUS_BAD_REQUEST,
-            0
-        );
+        return -1;
     }
 
     memcpy(
@@ -848,12 +869,10 @@ static int http_process_request(
 
     request_buffer[length] = '\0';
 
-
     printf(
         "Raw HTTP request:\n%s\n",
         request_buffer
     );
-
 
     /*
      * Parse request.
@@ -862,13 +881,16 @@ static int http_process_request(
 
     if (http_parse_request(
             request_buffer,
-            &request
+            &request,
+            config
         ) < 0) {
 
         fprintf(
             stderr,
             "Invalid HTTP request\n"
         );
+
+        free(request_buffer);
 
         *close_connection = 1;
 
@@ -879,6 +901,10 @@ static int http_process_request(
         );
     }
 
+    /*
+     * request_buffer is no longer needed after parsing.
+     */
+    free(request_buffer);
 
     /*
      * Only GET and HEAD are supported.
@@ -896,42 +922,30 @@ static int http_process_request(
         );
     }
 
-
     /*
      * HTTP/1.1 requires Host.
      */
     if (strcmp(
             request.version,
             "HTTP/1.1"
-        ) == 0) {
+        ) == 0 &&
+        http_get_header(
+            &request,
+            "Host"
+        ) == NULL) {
 
-        const char *host =
-            http_get_header(
-                &request,
-                "Host"
-            );
+        *close_connection = 1;
 
-        if (host == NULL ||
-            host[0] == '\0') {
-
-            *close_connection = 1;
-
-            return http_send_error(
-                client_fd,
-                HTTP_STATUS_BAD_REQUEST,
-                0
-            );
-        }
+        return http_send_error(
+            client_fd,
+            HTTP_STATUS_BAD_REQUEST,
+            0
+        );
     }
 
-
     /*
-     * Check Connection header.
-     *
-     * HTTP/1.1 is persistent by default.
-     *
-     * Connection: close explicitly requests
-     * that the connection be closed.
+     * Determine whether the client requested
+     * connection closure.
      */
     const char *connection =
         http_get_header(
@@ -940,30 +954,18 @@ static int http_process_request(
         );
 
     if (connection != NULL &&
-        strcasecmp(
-            connection,
-            "close"
-        ) == 0) {
+        strcasecmp(connection, "close") == 0) {
 
         *close_connection = 1;
-    }
 
+    } else if (
+        strcmp(request.version, "HTTP/1.0") == 0) {
 
-    /*
-     * HTTP/1.0 is non-persistent by default.
-     */
-    if (strcmp(
-            request.version,
-            "HTTP/1.0"
-        ) == 0) {
-
+        /*
+         * HTTP/1.0 connections are closed by default.
+         */
         *close_connection = 1;
     }
-
-
-    int keep_alive =
-        !(*close_connection);
-
 
     printf(
         "Parsed HTTP request:\n"
@@ -976,7 +978,6 @@ static int http_process_request(
         request.query,
         request.version
     );
-
 
     printf("Headers:\n");
 
@@ -991,12 +992,8 @@ static int http_process_request(
         );
     }
 
-
     /*
      * Open requested file.
-     *
-     * file_open_path() now performs secure
-     * filesystem resolution using openat2().
      */
     file_t file;
 
@@ -1007,24 +1004,22 @@ static int http_process_request(
         ) < 0) {
 
         if (errno == ENOENT) {
-
             return http_send_error(
                 client_fd,
                 HTTP_STATUS_NOT_FOUND,
-                keep_alive
+                0
             );
         }
 
-        if (errno == EACCES) {
+        if (errno == EACCES ||
+            errno == EPERM) {
 
             return http_send_error(
                 client_fd,
                 HTTP_STATUS_FORBIDDEN,
-                keep_alive
+                0
             );
         }
-
-        *close_connection = 1;
 
         return http_send_error(
             client_fd,
@@ -1033,7 +1028,6 @@ static int http_process_request(
         );
     }
 
-
     printf(
         "Opened %s: fd=%d, size=%ld bytes\n",
         request.path,
@@ -1041,41 +1035,30 @@ static int http_process_request(
         (long)file.size
     );
 
-
-    /*
-     * Determine MIME type using the decoded path.
-     */
     const char *content_type =
         mime_type(request.path);
 
-
     /*
-     * Send HTTP response headers.
+     * HEAD sends the headers but no body.
      */
+    int send_body =
+        strcmp(request.method, "HEAD") != 0;
+
     if (http_send_response(
             client_fd,
             HTTP_STATUS_OK,
             content_type,
             file.size,
-            keep_alive
+            !(*close_connection)
         ) < 0) {
 
         close(file.fd);
         return -1;
     }
 
-
-    /*
-     * HEAD sends headers but NOT the body.
-     */
-    if (strcmp(
-            request.method,
-            "GET"
-        ) == 0) {
-
+    if (send_body) {
         if (file_send(
-                &file,
-                client_fd
+                &file,client_fd
             ) < 0) {
 
             close(file.fd);
@@ -1083,16 +1066,13 @@ static int http_process_request(
         }
     }
 
-
     close(file.fd);
 
     return 0;
 }
 
 
-/* ============================================================
- * Handle HTTP connection
- *
+/*
  * One TCP connection may contain multiple HTTP requests.
  * ============================================================ */
 
@@ -1101,12 +1081,41 @@ int http_handle_request(
     int root_fd,
     const server_config_t *config)
 {
-    char buffer[HTTP_BUFFER_SIZE];
+	if (!http_config_valid(config)) {
+   	fprintf(
+        stderr,
+        "Invalid HTTP configuration:\n"
+        "  buffer_size=%zu\n"
+        "  max_headers=%zu (capacity=%d)\n"
+        "  header_name_max=%zu (capacity=%d)\n"
+        "  header_value_max=%zu (capacity=%d)\n",
+        config->http_buffer_size,
+        config->http_max_headers,
+        HTTP_MAX_HEADERS,
+        config->http_header_name_max,
+        HTTP_HEADER_NAME_MAX,
+        config->http_header_value_max,
+        HTTP_HEADER_VALUE_MAX);
+
+        return -1;
+
+	}
+
+
+    char *buffer=malloc(config->http_buffer_size);
+
+    if (buffer == NULL) {
+    perror("malloc");
+    return -1;
+
+    }
+
 
     size_t buffer_used = 0;
 
     int close_connection = 0;
 
+    int result=0;
 
     while (!close_connection) {
 
@@ -1121,7 +1130,7 @@ int http_handle_request(
             /*
              * Buffer completely full.
              */
-            if (buffer_used >= sizeof(buffer)) {
+            if (buffer_used >= config->http_buffer_size) {
 
                 http_send_error(
                     client_fd,
@@ -1129,14 +1138,15 @@ int http_handle_request(
                     0
                 );
 
-                return -1;
+                result= -1;
+		goto cleanup;
             }
 
 
             ssize_t received = recv(
                 client_fd,
                 buffer + buffer_used,
-                sizeof(buffer) - buffer_used,
+                config->http_buffer_size - buffer_used,
                 0
             );
 
@@ -1155,11 +1165,13 @@ int http_handle_request(
                         "Client receive timeout\n"
                     );
 
-                    return -1;
+                    result= -1;
+		    goto cleanup;
                 }
 
                 perror("recv");
-                return -1;
+                result= -1;
+		goto cleanup;
             }
 
 
@@ -1167,7 +1179,8 @@ int http_handle_request(
              * Client closed TCP connection.
              */
             if (received == 0) {
-                return 0;
+                result= 0;
+		goto cleanup;
             }
 
 
@@ -1182,11 +1195,11 @@ int http_handle_request(
         const char *header_end =
             http_find_header_end(
                 buffer,
-                buffer_used
-            );
+                buffer_used);
 
         if (header_end == NULL) {
-            return -1;
+	    result=-1;
+	    goto cleanup;
         }
 
 
@@ -1205,9 +1218,10 @@ int http_handle_request(
                 buffer,
                 request_length,
                 &close_connection,
-		root_fd) < 0) {
+		root_fd,config) < 0) {
 
-            return -1;
+            result=-1;
+	    goto cleanup;
         }
 
 
@@ -1239,6 +1253,7 @@ int http_handle_request(
         buffer_used = remaining;
     }
 
-
-    return 0;
+    cleanup:
+    	    free(buffer);
+	    return result;
 }

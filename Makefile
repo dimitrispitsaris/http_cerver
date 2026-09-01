@@ -18,3 +18,10 @@ clean:
 
 run: $(TARGET)
 	./$(TARGET)
+
+test: $(TARGET)
+	./$(TARGET) &
+	serevr_pid=$$!; \
+ 	trap 'kill $$server_pid 2>/dev/null || true' EXIT INT TERM; \
+	sleep 0.2;\
+	python3 tests/test_http.py

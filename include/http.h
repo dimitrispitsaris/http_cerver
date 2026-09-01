@@ -6,9 +6,9 @@
 
 #include "config.h"
 
-#define HTTP_MAX_HEADERS 32
-#define HTTP_HEADER_NAME_MAX 64
-#define HTTP_HEADER_VALUE_MAX 4096
+#define HTTP_MAX_HEADERS DEFAULT_HTTP_MAX_HEADERS
+#define HTTP_HEADER_NAME_MAX DEFAULT_HTTP_HEADER_NAME_MAX
+#define HTTP_HEADER_VALUE_MAX DEFAULT_HTTP_HEADER_VALUE_MAX
 #define HTTP_QUERY_MAX 4096
 
 typedef enum {
@@ -70,8 +70,8 @@ const char *http_status_reason(http_status_t status);
 
 int http_parse_request(
     const char *buffer,
-    http_request_t *request
-);
+    http_request_t *request,
+    const server_config_t *config);
 
 
 int http_send_response(
