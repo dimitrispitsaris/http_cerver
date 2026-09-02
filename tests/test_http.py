@@ -375,6 +375,149 @@ def test_duplicate_host():
     assert status_code(headers) == 400
     assert b"400 Bad Request" in body
 
+def test_http10_default_close():
+    request = (
+        "GET /index.html HTTP/1.0\r\n"
+        "Host: localhost\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 200
+    assert header_value(headers, "Connection") == "close"
+    assert len(body) == int(header_value(headers, "Content-Length")
+
+    )                                            
+    
+def test_http10_connection_close():
+    request = (
+        "GET /index.html HTTP/1.0\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 200
+    assert header_value(headers, "Connection") == "close"
+    assert len(body) == int( header_value(headers, "Content-Length")
+    
+    )
+    
+
+def test_http11_default_keep_alive():
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3
+    ) as sock:
+
+        request = (
+            "GET /index.html HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "\r\n"
+        )
+
+        sock.sendall(request.encode("ascii"))
+
+        response, pending = receive_response(sock)
+
+        headers, body = split_response(response)
+
+        assert status_code(headers) == 200
+        assert header_value(headers, "Connection") == "keep-alive"
+        assert len(body) == int(
+            header_value(headers, "Content-Length")
+        )
+
+        assert body
+
+        request = (
+            "GET / HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+        )
+
+        sock.sendall(request.encode("ascii"))
+
+        response, pending = receive_response(
+            sock,
+            pending
+        )
+
+        headers, body = split_response(response)
+
+        assert status_code(headers) == 200
+        assert header_value(headers, "Connection") == "close"
+        assert body
+
+        assert pending == b""
+
+def test_http11_connection_keep_alive():
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3
+    ) as sock:
+
+        request = (
+            "GET /index.html HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n"
+        )
+
+        sock.sendall(request.encode("ascii"))
+
+        response, pending = receive_response(sock)
+
+        headers, body = split_response(response)
+
+        assert status_code(headers) == 200
+        assert header_value(headers, "Connection") == "keep-alive"
+        assert body
+
+        request = (
+            "GET / HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+        )
+
+        sock.sendall(request.encode("ascii"))
+
+        response, pending = receive_response(
+            sock,
+            pending
+        )
+
+        headers, body = split_response(response)
+
+        assert status_code(headers) == 200
+        assert header_value(headers, "Connection") == "close"
+        assert body
+
+def test_http11_connection_close():
+    request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 200
+    assert header_value(headers, "Connection") == "close"
+    assert body
+
 TESTS = [
     test_get_existing_file,
     test_head_existing_file,
@@ -388,7 +531,12 @@ TESTS = [
     test_extra_request_line_field,
     test_missing_request_target,
     test_unsupported_http_version,
-    test_duplicate_host
+    test_duplicate_host,
+    test_http10_default_close,
+    test_http10_connection_close,
+    test_http11_default_keep_alive,
+    test_http11_connection_keep_alive,
+    test_http11_connection_close,
 ]
 
 
