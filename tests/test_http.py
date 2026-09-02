@@ -295,6 +295,85 @@ def test_keep_alive():
         assert b"<html" in body2
 
         assert pending == b""
+def test_malformed_request_line():
+    request = (
+        "GET /index.html\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert b"400 Bad Request" in body
+
+
+def test_extra_request_line_field():
+    request = (
+        "GET /index.html HTTP/1.1 EXTRA\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert b"400 Bad Request" in body
+
+
+def test_missing_request_target():
+    request = (
+        "GET HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert b"400 Bad Request" in body
+
+
+def test_unsupported_http_version():
+    request = (
+        "GET /index.html HTTP/2.0\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert b"400 Bad Request" in body
+
+
+def test_duplicate_host():
+    request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Host: example.com\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert b"400 Bad Request" in body
 
 TESTS = [
     test_get_existing_file,
@@ -305,6 +384,11 @@ TESTS = [
     test_root_index,
     test_connection_close,
     test_keep_alive,
+    test_malformed_request_line,
+    test_extra_request_line_field,
+    test_missing_request_target,
+    test_unsupported_http_version,
+    test_duplicate_host
 ]
 
 

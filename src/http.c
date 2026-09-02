@@ -379,6 +379,36 @@ static const char *http_find_header_end(
     return NULL;
 }
 
+/*============================================================
+ *One HOST Accepted
+ *==========================================================*/
+static int http_validate_host(
+    const http_request_t *request)
+{
+    size_t host_count = 0;
+
+    for (size_t i = 0;
+         i < request->header_count;
+         i++) {
+
+        if (strcasecmp(
+                request->headers[i].name,
+                "Host"
+            ) == 0) {
+
+            host_count++;
+        }
+    }
+
+    /*
+     * HTTP/1.1 requires exactly one Host header.
+     */
+    if (host_count != 1) {
+        return -1;
+    }
+
+    return 0;
+}
 
 /* ============================================================
  * Find an HTTP header
@@ -765,11 +795,133 @@ int http_send_error(
     return 0;
 }
 
+/*================================
+ * Parse Request Helper 
+ *================================
+ */
+static int http_parse_request_line(
+    const char *buffer,
+    http_request_t *request,
+    char *target,
+    size_t target_size)
+{
+    const char *line_end =
+        strstr(buffer, "\r\n");
+
+    if (line_end == NULL) {
+        return -1;
+    }
+
+    /*
+     * Find the first and second SP characters.
+     *
+     * request-line =
+     *
+     *     method SP request-target SP HTTP-version
+     */
+    const char *first_space =
+        memchr(
+            buffer,
+            ' ',
+            (size_t)(line_end - buffer)
+        );
+
+    if (first_space == NULL) {
+        return -1;
+    }
+
+    const char *second_space =
+        memchr(
+            first_space + 1,
+            ' ',
+            (size_t)(line_end - first_space - 1)
+        );
+
+    if (second_space == NULL) {
+        return -1;
+    }
+
+    /*
+     * There must be exactly two spaces.
+     *
+     * A third space would mean the request line
+     * contains an extra field.
+     */
+    if (memchr(
+            second_space + 1,
+            ' ',
+            (size_t)(line_end - second_space - 1)
+        ) != NULL) {
+
+        return -1;
+    }
+
+    /*
+     * Method.
+     */
+    size_t method_length =
+        (size_t)(first_space - buffer);
+
+    if (method_length == 0 ||
+        method_length >= sizeof(request->method)) {
+
+        return -1;
+    }
+
+    memcpy(
+        request->method,
+        buffer,
+        method_length
+    );
+
+    request->method[method_length] = '\0';
+
+    /*
+     * Request target.
+     */
+    size_t target_length =
+        (size_t)(second_space - first_space - 1);
+
+    if (target_length == 0 ||
+        target_length >= target_size) {
+
+        return -1;
+    }
+
+    memcpy(
+        target,
+        first_space + 1,
+        target_length
+    );
+
+    target[target_length] = '\0';
+
+    /*
+     * HTTP version.
+     */
+    size_t version_length =
+        (size_t)(line_end - second_space - 1);
+
+    if (version_length == 0 ||
+        version_length >= sizeof(request->version)) {
+
+        return -1;
+    }
+
+    memcpy(
+        request->version,
+        second_space + 1,
+        version_length
+    );
+
+    request->version[version_length] = '\0';
+
+    return 0;
+}
 
 /* ============================================================
  * Parse HTTP request
  * ============================================================ */
-
 int http_parse_request(
     const char *buffer,
     http_request_t *request,
@@ -778,75 +930,61 @@ int http_parse_request(
     request->header_count = 0;
     request->query[0] = '\0';
 
-    /*
-     * Parse:
-     *
-     * METHOD TARGET VERSION
-     *
-     * Example:
-     *
-     * GET /index.html?name=dimitris HTTP/1.1
-     */
     char target[4096];
 
-    int fields = sscanf(
-        buffer,
-        "%15s %4095s %15s",
-        request->method,
-        target,
-        request->version
-    );
+    if (http_parse_request_line(
+            buffer,
+            request,
+            target,
+            sizeof(target)
+        ) < 0) {
 
-    if (fields != 3) {
-        return -1;
+        return HTTP_PARSE_BAD_REQUEST;
     }
-
 
     /*
      * Currently support HTTP/1.0 and HTTP/1.1.
      */
-    if (strcmp ( request->version, "HTTP/1.1") != 0 &&
-        strcmp(request->version, "HTTP/1.0" ) != 0) {
+    if (strcmp(
+            request->version,
+            "HTTP/1.1"
+        ) != 0 &&
+        strcmp(
+            request->version,
+            "HTTP/1.0"
+        ) != 0) {
 
-        return -1;
+        return HTTP_PARSE_BAD_REQUEST;
     }
-
 
     /*
-     * Separate query string from path.
-     *
-     * Example:
-     *
-     * /index.html?name=dimitris
-     *
-     * becomes:
-     *
-     * target       = "/index.html"
-     * request->query = "name=dimitris"
+     * Separate path and query string,
+     * then percent-decode the path.
      */
-    
-    if (http_parse_target(target,request)<0)
-    {
-	    return -1;
-    }
+    if (http_parse_target(
+            target,
+            request
+        ) < 0) {
 
+        return HTTP_PARSE_BAD_REQUEST;
+    }
 
     /*
      * Parse headers.
      */
-	int result =
- 	   http_parse_headers(
-           buffer,
-           request,
-           config );
+    int result =
+        http_parse_headers(
+            buffer,
+            request,
+            config
+        );
 
-	if (result != HTTP_PARSE_OK) {
-	    return result;
-	}	
-    return 0;
+    if (result != HTTP_PARSE_OK) {
+        return result;
+    }
+
+    return HTTP_PARSE_OK;
 }
-
-
 /* ============================================================
  * Handle ONE complete HTTP request
  * ============================================================ */
@@ -946,24 +1084,18 @@ static int http_process_request(
     /*
      * HTTP/1.1 requires Host.
      */
-    if (strcmp(
-            request.version,
-            "HTTP/1.1"
-        ) == 0 &&
-        http_get_header(
-            &request,
-            "Host"
-        ) == NULL) {
 
-        *close_connection = 1;
+      if (strcmp(
+        request.version,
+        "HTTP/1.1") == 0) {
 
-        return http_send_error(
-            client_fd,
-            HTTP_STATUS_BAD_REQUEST,
-            0
-        );
+      if (http_validate_host(&request) < 0) {
+
+             *close_connection = 1;
+
+        return http_send_error( client_fd, HTTP_STATUS_BAD_REQUEST,0);
     }
-
+}
     /*
      * Determine whether the client requested
      * connection closure.
