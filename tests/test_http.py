@@ -518,6 +518,57 @@ def test_http11_connection_close():
     assert header_value(headers, "Connection") == "close"
     assert body
 
+def test_concurrent_clients():
+    """
+    Verify that a client with an incomplete request does not block
+    another client from being served.
+
+    The fork-based server should handle the two connections in
+    independent child processes.
+    """
+    slow_request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+    )
+
+    fast_request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    with socket.create_connection((HOST, PORT), timeout=3) as slow_sock:
+        # Deliberately omit the final CRLFCRLF so the child handling
+        # this connection remains blocked waiting for request completion.
+        slow_sock.sendall(slow_request.encode("ascii"))
+
+        with socket.create_connection((HOST, PORT), timeout=2) as fast_sock:
+            fast_sock.sendall(fast_request.encode("ascii"))
+
+            response = bytearray()
+
+            while True:
+                chunk = fast_sock.recv(4096)
+
+                if not chunk:
+                    break
+
+                response.extend(chunk)
+
+            assert response
+
+            headers, body = split_response(bytes(response))
+
+            assert status_code(headers) == 200
+            assert header_value(headers, "Connection") == "close"
+            assert len(body) == int(
+                header_value(headers, "Content-Length")
+            )
+
+    # Closing the slow socket causes its child process to leave the
+    # request loop rather than waiting for the configured timeout.    
+
 TESTS = [
     test_get_existing_file,
     test_head_existing_file,
@@ -537,6 +588,7 @@ TESTS = [
     test_http11_default_keep_alive,
     test_http11_connection_keep_alive,
     test_http11_connection_close,
+    test_concurrent_clients,
 ]
 
 
