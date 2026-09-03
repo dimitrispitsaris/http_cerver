@@ -19,13 +19,14 @@ clean:
 run: $(TARGET)
 	./$(TARGET)
 
-
 test: $(TARGET)
 	./$(TARGET) &
 	server_pid=$$!; \
 	trap 'kill $$server_pid 2>/dev/null || true' EXIT INT TERM; \
 	sleep 0.2; \
-	python3 tests/test_http.py; \
-	test_status=$$?; \
-	python3 tests/test_limits.py || test_status=$$?; \
+	test_status=0; \
+	python3 tests/test_http.py || test_status=1; \
+	python3 tests/test_limits.py || test_status=1; \
+	python3 tests/test_security.py || test_status=1; \
+	python3 tests/test_config.py || test_status=1; \
 	exit $$test_status

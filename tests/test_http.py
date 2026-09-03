@@ -836,6 +836,31 @@ def test_rejected_body_closes_connection():
         assert header_value(headers, "Connection") == "close"
         assert b"Request bodies are not supported" in body
 
+def test_error_response_closes_connection():
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3
+    ) as sock:
+
+        request = (
+            "GET /does-not-exist.html HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "\r\n"
+        )
+
+        sock.sendall(request.encode("ascii"))
+
+        response, pending = receive_response(sock)
+
+        headers, body = split_response(response)
+
+        assert status_code(headers) == 404
+        assert header_value(headers, "Connection") == "close"
+        assert b"404 Not Found" in body
+        assert pending == b""
+
+        assert sock.recv(1) == b""
+
 TESTS = [
     test_get_existing_file,
     test_head_existing_file,
@@ -867,7 +892,7 @@ TESTS = [
     test_transfer_encoding_rejected,
     test_duplicate_content_length_rejected,
     test_rejected_body_closes_connection,
-
+    test_error_response_closes_connection,
 ]
 
 
