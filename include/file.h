@@ -8,10 +8,6 @@ typedef struct {
     off_t size;
 } file_t;
 
-int file_open(
-    const char *path,
-    file_t *file
-);
 
 int file_open_path(
     int root_fd,

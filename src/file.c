@@ -16,59 +16,6 @@
 #define DEFAULT_INDEX_FILE "index.html"
 
 /* ============================================================
- * Open a regular file using an existing filesystem path
- * ============================================================ */
-
-int file_open(
-    const char *path,
-    file_t *file)
-{
-    file->fd =
-        open(
-            path,
-            O_RDONLY | O_CLOEXEC
-        );
-
-    if (file->fd < 0) {
-        return -1;
-    }
-
-    struct stat st;
-
-    if (fstat(
-            file->fd,
-            &st
-        ) < 0) {
-
-        close(file->fd);
-        return -1;
-    }
-
-
-    if (!S_ISREG(st.st_mode)) {
-
-        fprintf(
-            stderr,
-            "%s is not a regular file\n",
-            path
-        );
-
-        close(file->fd);
-
-        errno = EACCES;
-
-        return -1;
-    }
-
-
-    file->size =
-        st.st_size;
-
-    return 0;
-}
-
-
-/* ============================================================
  * Open requested HTTP path safely beneath document root
  *
  * openat2() is used so the kernel performs path resolution
@@ -228,12 +175,16 @@ int file_open_path(
 
         if (index_fd < 0) {
 
-            if (errno == EXDEV ||
-                errno == ELOOP) {
+	    int saved_errno=errno;
 
-                errno = EACCES;
-            }
+	    close(fd);
 
+	    if (saved_errno == EXDEV ||
+        	saved_errno == ELOOP) {
+        	errno = EACCES;
+    	   } else {
+        	errno = saved_errno;
+           }
             return -1;
         }
 

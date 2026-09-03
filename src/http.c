@@ -492,7 +492,7 @@ static int http_parse_headers(
             );
 
         if (colon == NULL) {
-            return -HTTP_PARSE_BAD_REQUEST;
+            return HTTP_PARSE_BAD_REQUEST;
         }
 
         /*

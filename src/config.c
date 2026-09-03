@@ -15,7 +15,7 @@ static int parse_positive_int(const char *value,int *result){
 	
 	long parsed=strtol(value,&end,10);
 
-	if (errno !=0 || end==value || *end !='\0' || parsed <= 0 || parsed >= INT_MAX){
+	if (errno !=0 || end==value || *end !='\0' || parsed <= 0 || parsed > INT_MAX){
 		return -1;
 	}
 
