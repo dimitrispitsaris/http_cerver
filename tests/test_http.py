@@ -24,6 +24,7 @@ def send_request(request: str) -> bytes:
 
     return bytes(response)
 
+
 def receive_response(sock, pending=b""):
     data = bytearray(pending)
 
@@ -62,6 +63,11 @@ def receive_response(sock, pending=b""):
             f"Invalid Content-Length: {content_length!r}"
         ) from exc
 
+    if body_length < 0:
+        raise AssertionError(
+            f"Negative Content-Length: {body_length}"
+        )
+
     total_length = body_start + body_length
 
     # --------------------------------------------------------
@@ -88,7 +94,9 @@ def split_response(response: bytes):
     header_end = response.find(b"\r\n\r\n")
 
     if header_end == -1:
-        raise AssertionError("Response does not contain header terminator")
+        raise AssertionError(
+            "Response does not contain header terminator"
+        )
 
     headers = response[:header_end].decode("iso-8859-1")
     body = response[header_end + 4:]
@@ -101,9 +109,16 @@ def status_code(headers: str) -> int:
     parts = status_line.split()
 
     if len(parts) < 2:
-        raise AssertionError(f"Invalid status line: {status_line!r}")
+        raise AssertionError(
+            f"Invalid status line: {status_line!r}"
+        )
 
-    return int(parts[1])
+    try:
+        return int(parts[1])
+    except ValueError as exc:
+        raise AssertionError(
+            f"Invalid status code in status line: {status_line!r}"
+        ) from exc
 
 
 def header_value(headers: str, name: str):
@@ -247,13 +262,11 @@ def test_connection_close():
         assert status_code(headers) == 200
         assert header_value(headers, "Connection") == "close"
 
-        # The server should close the TCP connection.
         assert sock.recv(1) == b""
 
 
 def test_keep_alive():
     with socket.create_connection((HOST, PORT), timeout=3) as sock:
-
         request1 = (
             "GET /index.html HTTP/1.1\r\n"
             "Host: localhost\r\n"
@@ -295,6 +308,8 @@ def test_keep_alive():
         assert b"<html" in body2
 
         assert pending == b""
+
+
 def test_malformed_request_line():
     request = (
         "GET /index.html\r\n"
@@ -375,6 +390,7 @@ def test_duplicate_host():
     assert status_code(headers) == 400
     assert b"400 Bad Request" in body
 
+
 def test_http10_default_close():
     request = (
         "GET /index.html HTTP/1.0\r\n"
@@ -388,10 +404,11 @@ def test_http10_default_close():
 
     assert status_code(headers) == 200
     assert header_value(headers, "Connection") == "close"
-    assert len(body) == int(header_value(headers, "Content-Length")
+    assert len(body) == int(
+        header_value(headers, "Content-Length")
+    )
 
-    )                                            
-    
+
 def test_http10_connection_close():
     request = (
         "GET /index.html HTTP/1.0\r\n"
@@ -406,10 +423,10 @@ def test_http10_connection_close():
 
     assert status_code(headers) == 200
     assert header_value(headers, "Connection") == "close"
-    assert len(body) == int( header_value(headers, "Content-Length")
-    
+    assert len(body) == int(
+        header_value(headers, "Content-Length")
     )
-    
+
 
 def test_http11_default_keep_alive():
     with socket.create_connection(
@@ -434,7 +451,6 @@ def test_http11_default_keep_alive():
         assert len(body) == int(
             header_value(headers, "Content-Length")
         )
-
         assert body
 
         request = (
@@ -458,6 +474,7 @@ def test_http11_default_keep_alive():
         assert body
 
         assert pending == b""
+
 
 def test_http11_connection_keep_alive():
     with socket.create_connection(
@@ -502,6 +519,9 @@ def test_http11_connection_keep_alive():
         assert header_value(headers, "Connection") == "close"
         assert body
 
+        assert pending == b""
+
+
 def test_http11_connection_close():
     request = (
         "GET /index.html HTTP/1.1\r\n"
@@ -518,6 +538,7 @@ def test_http11_connection_close():
     assert header_value(headers, "Connection") == "close"
     assert body
 
+
 def test_concurrent_clients():
     """
     Verify that a client with an incomplete request does not block
@@ -526,6 +547,7 @@ def test_concurrent_clients():
     The fork-based server should handle the two connections in
     independent child processes.
     """
+
     slow_request = (
         "GET /index.html HTTP/1.1\r\n"
         "Host: localhost\r\n"
@@ -538,12 +560,20 @@ def test_concurrent_clients():
         "\r\n"
     )
 
-    with socket.create_connection((HOST, PORT), timeout=3) as slow_sock:
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3
+    ) as slow_sock:
+
         # Deliberately omit the final CRLFCRLF so the child handling
         # this connection remains blocked waiting for request completion.
         slow_sock.sendall(slow_request.encode("ascii"))
 
-        with socket.create_connection((HOST, PORT), timeout=2) as fast_sock:
+        with socket.create_connection(
+            (HOST, PORT),
+            timeout=2
+        ) as fast_sock:
+
             fast_sock.sendall(fast_request.encode("ascii"))
 
             response = bytearray()
@@ -566,8 +596,245 @@ def test_concurrent_clients():
                 header_value(headers, "Content-Length")
             )
 
-    # Closing the slow socket causes its child process to leave the
-    # request loop rather than waiting for the configured timeout.    
+
+def test_path_traversal():
+    request = (
+        "GET /../README.md HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 403
+
+
+def test_encoded_path_traversal():
+    request = (
+        "GET /%2e%2e/README.md HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 403
+
+
+def test_uppercase_encoded_path_traversal():
+    request = (
+        "GET /%2E%2E/README.md HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 403
+
+
+def test_fragmented_request():
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3
+    ) as sock:
+
+        parts = [
+            "GET /index.html HTTP/1.1\r\n",
+            "Host: local",
+            "host\r\nConnection: ",
+            "close\r\n\r\n",
+        ]
+
+        for part in parts:
+            sock.sendall(part.encode("ascii"))
+
+        response = bytearray()
+
+        while True:
+            chunk = sock.recv(4096)
+
+            if not chunk:
+                break
+
+            response.extend(chunk)
+
+        headers, body = split_response(bytes(response))
+
+        assert status_code(headers) == 200
+        assert len(body) == int(
+            header_value(headers, "Content-Length")
+        )
+
+
+def test_pipelined_requests():
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3
+    ) as sock:
+
+        request = (
+            "GET /index.html HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "\r\n"
+            "GET / HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+        )
+
+        sock.sendall(request.encode("ascii"))
+
+        response1, pending = receive_response(sock)
+
+        headers1, body1 = split_response(response1)
+
+        assert status_code(headers1) == 200
+        assert body1
+
+        response2, pending = receive_response(
+            sock,
+            pending
+        )
+
+        headers2, body2 = split_response(response2)
+
+        assert status_code(headers2) == 200
+        assert body2
+        assert pending == b""
+
+def test_content_length_zero():
+    request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 200
+    assert header_value(headers, "Connection") == "close"
+
+
+def test_get_request_body_rejected():
+    request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 5\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "abcde"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert header_value(headers, "Connection") == "close"
+    assert b"Request bodies are not supported" in body
+
+def test_head_request_body_rejected():
+    request = (
+        "HEAD /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 5\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "abcde"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert header_value(headers, "Connection") == "close"
+    assert b"Request bodies are not supported" in body
+
+def test_transfer_encoding_rejected():
+    request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Transfer-Encoding: chunked\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert header_value(headers, "Connection") == "close"
+    assert b"Transfer-Encoding is not supported" in body
+
+def test_duplicate_content_length_rejected():
+    request = (
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 0\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+
+    response = send_request(request)
+
+    headers, body = split_response(response)
+
+    assert status_code(headers) == 400
+    assert header_value(headers, "Connection") == "close"
+    assert b"Duplicate Content-Length" in body
+
+
+def test_rejected_body_closes_connection():
+    with socket.create_connection(
+        (HOST, PORT),
+        timeout=3,
+    ) as sock:
+
+        bad_request = (
+            "GET /index.html HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Content-Length: 5\r\n"
+            "Connection: keep-alive\r\n"
+            "\r\n"
+            "abcde"
+        ).encode("ascii")
+
+        sock.sendall(bad_request)
+
+        response = bytearray()
+
+        while True:
+            chunk = sock.recv(4096)
+
+            if not chunk:
+                break
+
+            response.extend(chunk)
+
+        headers, body = split_response(
+            bytes(response)
+        )
+
+        assert status_code(headers) == 400
+        assert header_value(headers, "Connection") == "close"
+        assert b"Request bodies are not supported" in body
 
 TESTS = [
     test_get_existing_file,
@@ -589,11 +856,25 @@ TESTS = [
     test_http11_connection_keep_alive,
     test_http11_connection_close,
     test_concurrent_clients,
+    test_path_traversal,
+    test_encoded_path_traversal,
+    test_uppercase_encoded_path_traversal,
+    test_fragmented_request,
+    test_pipelined_requests,
+    test_content_length_zero,
+    test_get_request_body_rejected,
+    test_head_request_body_rejected,
+    test_transfer_encoding_rejected,
+    test_duplicate_content_length_rejected,
+    test_rejected_body_closes_connection,
+
 ]
 
 
 def main():
     failures = 0
+
+    print(f"Running {len(TESTS)} tests...\n")
 
     for test in TESTS:
         try:
@@ -602,7 +883,10 @@ def main():
 
         except Exception as exc:
             failures += 1
-            print(f"FAIL {test.__name__}: {exc}")
+            print(
+                f"FAIL {test.__name__}: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     print()
 
@@ -616,3 +900,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
