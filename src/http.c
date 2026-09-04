@@ -5,7 +5,7 @@
 #include "mime.h"
 #include "io.h"
 #include "config.h"
-
+#include "http_connection.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -370,7 +370,6 @@ static int http_process_request(
     return 0;
 }
 
-
 int http_handle_request(
     int client_fd,
     int root_fd,
@@ -400,20 +399,27 @@ int http_handle_request(
         return -1;
     }
 
-    char *buffer = malloc(config->http_buffer_size);
+    http_connection_t connection;
 
-    if (buffer == NULL) {
-        perror("malloc");
+    if (http_connection_init(
+            &connection,
+            config->http_buffer_size
+        ) < 0) {
+        perror("http_connection_init");
         return -1;
     }
 
-    size_t buffer_used = 0;
-    int close_connection = 0;
     int result = 0;
 
-    while (!close_connection) {
-        while (!http_request_complete(buffer, buffer_used)) {
-            if (buffer_used >= config->http_buffer_size) {
+    while (!connection.close_connection) {
+        while (!http_request_complete(
+                    connection.buffer,
+                    connection.buffer_used
+                )) {
+
+            if (connection.buffer_used >=
+                connection.buffer_capacity) {
+
                 http_send_error(
                     client_fd,
                     HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE,
@@ -426,8 +432,8 @@ int http_handle_request(
 
             ssize_t received = recv(
                 client_fd,
-                buffer + buffer_used,
-                config->http_buffer_size - buffer_used,
+                connection.buffer + connection.buffer_used,
+                connection.buffer_capacity - connection.buffer_used,
                 0
             );
 
@@ -436,13 +442,20 @@ int http_handle_request(
                     continue;
                 }
 
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    fprintf(stderr, "Client receive timeout\n");
+                if (errno == EAGAIN ||
+                    errno == EWOULDBLOCK) {
+
+                    fprintf(
+                        stderr,
+                        "Client receive timeout\n"
+                    );
+
                     result = -1;
                     goto cleanup;
                 }
 
                 perror("recv");
+
                 result = -1;
                 goto cleanup;
             }
@@ -455,32 +468,36 @@ int http_handle_request(
                 goto cleanup;
             }
 
-            buffer_used += (size_t)received;
+            connection.buffer_used +=
+                (size_t)received;
         }
 
-        const char *header_end = http_find_header_end(
-            buffer,
-            buffer_used
-        );
+        const char *header_end =
+            http_find_header_end(
+                connection.buffer,
+                connection.buffer_used
+            );
 
         if (header_end == NULL) {
             result = -1;
             goto cleanup;
         }
 
-        size_t request_length = (size_t)(header_end - buffer);
+        size_t request_length =
+            (size_t)(header_end - connection.buffer);
 
         /*
          * Process exactly one request.
          */
         if (http_process_request(
                 client_fd,
-                buffer,
+                connection.buffer,
                 request_length,
-                &close_connection,
+                &connection.close_connection,
                 root_fd,
                 config
             ) < 0) {
+
             result = -1;
             goto cleanup;
         }
@@ -494,22 +511,22 @@ int http_handle_request(
          *
          *     [request 2]
          */
-        size_t remaining = buffer_used - request_length;
+        size_t remaining =
+            connection.buffer_used - request_length;
 
         if (remaining > 0) {
             memmove(
-                buffer,
-                buffer + request_length,
+                connection.buffer,
+                connection.buffer + request_length,
                 remaining
             );
         }
 
-        buffer_used = remaining;
+        connection.buffer_used = remaining;
     }
 
 cleanup:
-    free(buffer);
+    http_connection_destroy(&connection);
+
     return result;
 }
-
-
