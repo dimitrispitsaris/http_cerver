@@ -12,9 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/socket.h>
 #include <unistd.h>
-
 
 static int http_config_valid(const server_config_t *config)
 {
@@ -370,163 +368,47 @@ static int http_process_request(
     return 0;
 }
 
-int http_handle_request(
+int http_process_connection(
+    http_connection_t *connection,
     int client_fd,
     int root_fd,
     const server_config_t *config)
 {
-    if (!http_config_valid(config)) {
-        if (config == NULL) {
-            fprintf(stderr, "Invalid HTTP configuration: config is NULL\n");
-        } else {
-            fprintf(
-                stderr,
-                "Invalid HTTP configuration:\n"
-                "  buffer_size=%zu\n"
-                "  max_headers=%zu (capacity=%d)\n"
-                "  header_name_max=%zu (capacity=%d)\n"
-                "  header_value_max=%zu (capacity=%d)\n",
-                config->http_buffer_size,
-                config->http_max_headers,
-                HTTP_MAX_HEADERS,
-                config->http_header_name_max,
-                HTTP_HEADER_NAME_MAX,
-                config->http_header_value_max,
-                HTTP_HEADER_VALUE_MAX
-            );
-        }
-
+    if (connection == NULL ||
+        !http_config_valid(config)) {
         return -1;
     }
 
-    http_connection_t connection;
-
-    if (http_connection_init(
-            &connection,
-            config->http_buffer_size
-        ) < 0) {
-        perror("http_connection_init");
-        return -1;
-    }
-
-    int result = 0;
-
-    while (!connection.close_connection) {
-        while (!http_request_complete(
-                    connection.buffer,
-                    connection.buffer_used
-                )) {
-
-            if (connection.buffer_used >=
-                connection.buffer_capacity) {
-
-                http_send_error(
-                    client_fd,
-                    HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE,
-                    0
-                );
-
-                result = -1;
-                goto cleanup;
-            }
-
-            ssize_t received = recv(
-                client_fd,
-                connection.buffer + connection.buffer_used,
-                connection.buffer_capacity - connection.buffer_used,
-                0
-            );
-
-            if (received < 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-
-                if (errno == EAGAIN ||
-                    errno == EWOULDBLOCK) {
-
-                    fprintf(
-                        stderr,
-                        "Client receive timeout\n"
-                    );
-
-                    result = -1;
-                    goto cleanup;
-                }
-
-                perror("recv");
-
-                result = -1;
-                goto cleanup;
-            }
-
-            /*
-             * Client closed the TCP connection.
-             */
-            if (received == 0) {
-                result = 0;
-                goto cleanup;
-            }
-
-            connection.buffer_used +=
-                (size_t)received;
-        }
-
-        const char *header_end =
-            http_find_header_end(
-                connection.buffer,
-                connection.buffer_used
-            );
-
-        if (header_end == NULL) {
-            result = -1;
-            goto cleanup;
-        }
-
+    while (http_connection_request_ready(connection)) {
         size_t request_length =
-            (size_t)(header_end - connection.buffer);
+            http_connection_request_length(
+                connection
+            );
 
-        /*
-         * Process exactly one request.
-         */
+        if (request_length == 0) {
+            return -1;
+        }
+
         if (http_process_request(
                 client_fd,
-                connection.buffer,
+                http_connection_data(connection),
                 request_length,
-                &connection.close_connection,
+                &connection->close_connection,
                 root_fd,
                 config
             ) < 0) {
-
-            result = -1;
-            goto cleanup;
+            return -1;
         }
 
-        /*
-         * Preserve any pipelined request already received:
-         *
-         *     [request 1][request 2]
-         *
-         * becomes:
-         *
-         *     [request 2]
-         */
-        size_t remaining =
-            connection.buffer_used - request_length;
+        http_connection_consume(
+            connection,
+            request_length
+        );
 
-        if (remaining > 0) {
-            memmove(
-                connection.buffer,
-                connection.buffer + request_length,
-                remaining
-            );
+        if (connection->close_connection) {
+            break;
         }
-
-        connection.buffer_used = remaining;
     }
 
-cleanup:
-    http_connection_destroy(&connection);
-
-    return result;
+    return 0;
 }

@@ -3,7 +3,7 @@
 
 #include <sys/types.h>
 #include <stddef.h>
-
+#include "http_connection.h"
 #include "config.h"
 
 #define HTTP_MAX_HEADERS DEFAULT_HTTP_MAX_HEADERS
@@ -43,7 +43,8 @@ typedef struct {
 
 } http_request_t;
 
-int http_handle_request(
+int http_process_connection(
+    http_connection_t *connection,
     int client_fd,
     int root_fd,
     const server_config_t *config

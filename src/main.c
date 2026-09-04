@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <string.h>
 #include <config.h>
+#include "fork_server.h"
 
 static void reap_children(int signal)
 {
@@ -77,7 +78,7 @@ int main(int arc, char **argv)
 
             close(server.fd);
 
-            if (http_handle_request(client_fd,server.root_fd,&config) < 0) {
+            if (fork_server_handle_connection(client_fd,server.root_fd,&config) < 0) {
                 close(client_fd);
                 _exit(EXIT_FAILURE);
             }

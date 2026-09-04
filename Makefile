@@ -4,7 +4,7 @@ CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -g -Iinclude
 
 TARGET = build/http_server
 
-SRC = src/main.c src/server.c src/http.c src/http_parse.c src/http_response.c src/http_connection.c src/file.c src/mime.c src/io.c src/config.c
+SRC = src/main.c src/server.c src/http.c src/http_parse.c src/http_response.c src/http_connection.c src/file.c src/mime.c src/io.c src/config.c src/fork_server.c
 
 all: $(TARGET)
 
