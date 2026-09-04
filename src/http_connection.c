@@ -110,6 +110,18 @@ int http_connection_request_ready(
     );
 }
 
+size_t http_connection_buffer_space(
+    const http_connection_t *connection
+)
+{
+    if (connection == NULL) {
+        return 0;
+    }
+
+    return connection->buffer_capacity -
+           connection->buffer_used;
+}
+
 size_t http_connection_request_length(
     const http_connection_t *connection
 )

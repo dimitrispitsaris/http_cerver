@@ -34,6 +34,10 @@ size_t http_connection_data_length(
     const http_connection_t *connection
 );
 
+size_t http_connection_buffer_space(
+    const http_connection_t *connection
+);
+
 int http_connection_request_ready(
     const http_connection_t *connection
 );
