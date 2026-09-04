@@ -3,13 +3,15 @@
 
 #include <sys/types.h>
 #include <stddef.h>
-#include "http_connection.h"
 #include "config.h"
 
 #define HTTP_MAX_HEADERS DEFAULT_HTTP_MAX_HEADERS
 #define HTTP_HEADER_NAME_MAX DEFAULT_HTTP_HEADER_NAME_MAX
 #define HTTP_HEADER_VALUE_MAX DEFAULT_HTTP_HEADER_VALUE_MAX
 #define HTTP_QUERY_MAX 4096
+
+typedef struct http_connection_t http_connection_t;
+typedef struct http_response_t http_response_t;
 
 typedef enum {
     HTTP_STATUS_OK = 200,

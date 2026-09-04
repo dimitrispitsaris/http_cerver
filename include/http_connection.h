@@ -2,13 +2,16 @@
 #define HTTP_CONNECTION_H
 
 #include <stddef.h>
+#include "http_response.h"
 
-typedef struct {
+typedef struct http_connection_t {
     char *buffer;
     size_t buffer_used;
     size_t buffer_capacity;
 
     int close_connection;
+
+    http_response_t response;
 } http_connection_t;
 
 int http_connection_init(

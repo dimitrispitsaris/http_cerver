@@ -3,9 +3,9 @@
 #include "http_response.h"
 #include "file.h"
 #include "mime.h"
-#include "io.h"
 #include "config.h"
 #include "http_connection.h"
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -13,6 +13,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+
 
 static int http_config_valid(const server_config_t *config)
 {
@@ -50,7 +51,6 @@ static int http_method_allowed(const char *method)
 }
 
 
-
 static int http_validate_host(const http_request_t *request)
 {
     size_t host_count = 0;
@@ -68,7 +68,6 @@ static int http_validate_host(const http_request_t *request)
 }
 
 
-
 static int http_validate_request_framing(
     const http_request_t *request,
     const char **reason)
@@ -84,7 +83,8 @@ static int http_validate_request_framing(
             content_length_count++;
 
             if (content_length_count > 1) {
-                *reason = "Duplicate Content-Length headers are not supported";
+                *reason =
+                    "Duplicate Content-Length headers are not supported";
                 return -1;
             }
 
@@ -115,12 +115,14 @@ static int http_validate_request_framing(
     }
 
     const char *start = content_length;
-    const char *end = content_length + strlen(content_length);
+    const char *end =
+        content_length + strlen(content_length);
 
     /*
      * Header parsing removes leading OWS but preserves trailing OWS.
      */
-    while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+    while (end > start &&
+           (end[-1] == ' ' || end[-1] == '\t')) {
         end--;
     }
 
@@ -137,9 +139,11 @@ static int http_validate_request_framing(
             return -1;
         }
 
-        unsigned int digit = (unsigned int)(*p - '0');
+        unsigned int digit =
+            (unsigned int)(*p - '0');
 
-        if (length > (ULLONG_MAX - digit) / 10) {
+        if (length >
+            (ULLONG_MAX - digit) / 10) {
             *reason = "Invalid Content-Length";
             return -1;
         }
@@ -162,14 +166,23 @@ static int http_validate_request_framing(
 }
 
 
-static int http_process_request(
-    int client_fd,
+static int http_prepare_response(
     const char *buffer,
     size_t length,
+    http_response_t *response,
     int *close_connection,
     int root_fd,
     const server_config_t *config)
 {
+    if (buffer == NULL ||
+        response == NULL ||
+        close_connection == NULL ||
+        !http_config_valid(config)) {
+        return -1;
+    }
+
+    http_response_init(response);
+
     char *request_buffer = malloc(length + 1);
 
     if (request_buffer == NULL) {
@@ -197,31 +210,37 @@ static int http_process_request(
         *close_connection = 1;
 
         if (parse_result == HTTP_PARSE_HEADERS_TOO_LARGE) {
-            fprintf(stderr, "HTTP request headers too large\n");
+            fprintf(
+                stderr,
+                "HTTP request headers too large\n"
+            );
 
-            return http_send_error(
-                client_fd,
+            return http_response_prepare_error(
+                response,
                 HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE,
-                0
+                NULL
             );
         }
 
-        fprintf(stderr, "Invalid HTTP request\n");
+        fprintf(
+            stderr,
+            "Invalid HTTP request\n"
+        );
 
-        return http_send_error(
-            client_fd,
+        return http_response_prepare_error(
+            response,
             HTTP_STATUS_BAD_REQUEST,
-            0
+            NULL
         );
     }
 
     if (!http_method_allowed(request.method)) {
         *close_connection = 1;
 
-        return http_send_error(
-            client_fd,
+        return http_response_prepare_error(
+            response,
             HTTP_STATUS_METHOD_NOT_ALLOWED,
-            0
+            NULL
         );
     }
 
@@ -232,10 +251,10 @@ static int http_process_request(
         http_validate_host(&request) < 0) {
         *close_connection = 1;
 
-        return http_send_error(
-            client_fd,
+        return http_response_prepare_error(
+            response,
             HTTP_STATUS_BAD_REQUEST,
-            0
+            NULL
         );
     }
 
@@ -253,8 +272,9 @@ static int http_process_request(
             framing_error
         );
 
-        return http_send_bad_request_message(
-            client_fd,
+        return http_response_prepare_error(
+            response,
+            HTTP_STATUS_BAD_REQUEST,
             framing_error
         );
     }
@@ -267,10 +287,8 @@ static int http_process_request(
         *close_connection = 1;
     }
 
-    const char *connection = http_get_header(
-        &request,
-        "Connection"
-    );
+    const char *connection =
+        http_get_header(&request, "Connection");
 
     if (connection != NULL &&
         strcasecmp(connection, "close") == 0) {
@@ -301,32 +319,38 @@ static int http_process_request(
 
     file_t file;
 
-    if (file_open_path(root_fd, request.path, &file) < 0) {
+    if (file_open_path(
+            root_fd,
+            request.path,
+            &file
+        ) < 0) {
+
         /*
          * Error responses close the connection.
          */
         *close_connection = 1;
 
         if (errno == ENOENT) {
-            return http_send_error(
-                client_fd,
+            return http_response_prepare_error(
+                response,
                 HTTP_STATUS_NOT_FOUND,
-                0
+                NULL
             );
         }
 
-        if (errno == EACCES || errno == EPERM) {
-            return http_send_error(
-                client_fd,
+        if (errno == EACCES ||
+            errno == EPERM) {
+            return http_response_prepare_error(
+                response,
                 HTTP_STATUS_FORBIDDEN,
-                0
+                NULL
             );
         }
 
-        return http_send_error(
-            client_fd,
+        return http_response_prepare_error(
+            response,
             HTTP_STATUS_INTERNAL_SERVER_ERROR,
-            0
+            NULL
         );
     }
 
@@ -337,7 +361,8 @@ static int http_process_request(
         (long long)file.size
     );
 
-    const char *content_type = mime_type(request.path);
+    const char *content_type =
+        mime_type(request.path);
 
     if (content_type == NULL) {
         content_type = "application/octet-stream";
@@ -346,27 +371,48 @@ static int http_process_request(
     /*
      * HEAD sends the same headers as GET but no body.
      */
-    int send_body = strcmp(request.method, "HEAD") != 0;
+    int send_body =
+        strcmp(request.method, "HEAD") != 0;
 
-    if (http_send_response(
-            client_fd,
+    int headers_length =
+        http_build_response_headers(
+            response->headers,
+            sizeof(response->headers),
             HTTP_STATUS_OK,
             content_type,
             file.size,
             !*close_connection
-        ) < 0) {
+        );
+
+    if (headers_length < 0) {
         close(file.fd);
         return -1;
     }
 
-    if (send_body && file_send(&file, client_fd) < 0) {
-        close(file.fd);
-        return -1;
-    }
+    response->headers_length =
+        (size_t)headers_length;
 
-    close(file.fd);
+    response->headers_sent = 0;
+
+    response->file_fd = file.fd;
+    response->file_size = file.size;
+    response->file_offset = 0;
+
+    response->body = NULL;
+    response->body_length = 0;
+    response->body_sent = 0;
+
+    response->send_body = send_body;
+
+    /*
+     * For HEAD there is no body to transmit.
+     * For GET the file remains open in the response state.
+     */
+    response->complete = send_body ? 0 : 0;
+
     return 0;
 }
+
 
 int http_process_connection(
     http_connection_t *connection,
@@ -389,10 +435,10 @@ int http_process_connection(
             return -1;
         }
 
-        if (http_process_request(
-                client_fd,
+        if (http_prepare_response(
                 http_connection_data(connection),
                 request_length,
+                &connection->response,
                 &connection->close_connection,
                 root_fd,
                 config
@@ -400,14 +446,29 @@ int http_process_connection(
             return -1;
         }
 
+	if (http_response_send_blocking(client_fd,&connection->response)<0){
+		return -1;
+	}
+
+	http_response_destroy(&connection->response);
+
         http_connection_consume(
             connection,
             request_length
         );
 
-        if (connection->close_connection) {
-            break;
-        }
+	if (connection->close_connection){
+		break;
+	}
+
+        /*
+         * The response has now been prepared.
+         *
+         * The transport layer will send it.
+         *
+         * For the current fork backend this will still
+         * eventually be done synchronously.
+         */
     }
 
     return 0;
